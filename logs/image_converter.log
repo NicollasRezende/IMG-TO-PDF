@@ -1,0 +1,10 @@
+2025-03-16 15:23:49,969 - utils.image_to_png - INFO - Iniciando conversão de imgs/imagem.jpeg para PDF
+2025-03-16 15:23:50,002 - utils.image_to_png - INFO - Conversão concluída: imgs/imagem.jpeg -> result.pdf
+2025-03-16 15:24:09,387 - utils.image_to_png - INFO - Iniciando conversão de imgs/imagem.jpeg para PDF
+2025-03-16 15:24:09,406 - utils.image_to_png - INFO - Conversão concluída: imgs/imagem.jpeg -> pdf/result.pdf
+2025-03-16 15:57:31,232 - utils.image_to_pdf - INFO - Iniciando conversão de imgs/imagem.jpeg para PDF
+2025-03-16 15:57:31,232 - utils.image_to_pdf - ERROR - O arquivo imgs/imagem.jpeg não existe
+2025-03-16 15:57:31,232 - utils.image_downloader - INFO - Iniciando download da imagem: https://plainly-glowing-kodiak.ngrok-free.app/documents/20117/31260/tree.png/5d3d8253-8bec-4b44-64da-a6bd38d422cb?version=1.0&t=1739913666916&imagePreview=1 (timeout: 30s)
+2025-03-16 15:57:33,239 - utils.image_downloader - INFO - Download concluído: https://plainly-glowing-kodiak.ngrok-free.app/documents/20117/31260/tree.png/5d3d8253-8bec-4b44-64da-a6bd38d422cb?version=1.0&t=1739913666916&imagePreview=1 -> imgs/tree.png
+2025-03-16 15:57:33,242 - utils.image_to_pdf - INFO - Iniciando conversão de imgs/tree.png para PDF
+2025-03-16 15:57:33,275 - utils.image_to_pdf - INFO - Conversão concluída: imgs/tree.png -> pdf/downloaded_image.pdf
