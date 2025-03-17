@@ -53,13 +53,15 @@ class AsyncImageDownloader:
         'image/webp': '.webp',
         'image/tiff': '.tiff',
         'image/bmp': '.bmp',
-        'image/svg+xml': '.svg'
+        'image/svg+xml': '.svg',
+        'application/pdf': '.pdf'  # Adicionado suporte para PDFs
     }
     
     def __init__(self, output_dir: Optional[str] = None, 
                  timeout: int = 30, 
                  max_concurrent_downloads: int = 20,
-                 chunk_size: int = 8192) -> None:
+                 chunk_size: int = 8192,
+                 verify_ssl: bool = True) -> None:
         """
         Inicializa o downloader de imagens assíncrono.
         
@@ -68,14 +70,17 @@ class AsyncImageDownloader:
             timeout: Tempo limite padrão para requisições em segundos
             max_concurrent_downloads: Número máximo de downloads concorrentes
             chunk_size: Tamanho dos chunks para download em bytes
+            verify_ssl: Se deve verificar certificados SSL
         """
         self.output_dir = output_dir
         self.timeout = timeout
         self.max_concurrent_downloads = max_concurrent_downloads
         self.chunk_size = chunk_size
+        self.verify_ssl = verify_ssl
         self.semaphore = None  # Será inicializado durante o download
         logger.debug(f"AsyncImageDownloader inicializado: output_dir={output_dir}, "
-                    f"timeout={timeout}, max_concurrent={max_concurrent_downloads}")
+                    f"timeout={timeout}, max_concurrent={max_concurrent_downloads}, "
+                    f"verify_ssl={verify_ssl}")
     
     def _extract_filename_from_headers(self, headers: Dict) -> Optional[str]:
         """
@@ -133,16 +138,16 @@ class AsyncImageDownloader:
     
     def _validate_image_content_type(self, content_type: str) -> bool:
         """
-        Verifica se o tipo de conteúdo corresponde a uma imagem.
+        Verifica se o tipo de conteúdo corresponde a uma imagem ou PDF.
         
         Args:
             content_type: Tipo de conteúdo MIME
             
         Returns:
-            True se for uma imagem, False caso contrário
+            True se for uma imagem ou PDF, False caso contrário
         """
         content_type = content_type.split(';')[0].strip().lower()
-        return content_type.startswith('image/') or content_type in self.CONTENT_TYPE_MAP
+        return content_type.startswith('image/') or content_type == 'application/pdf' or content_type in self.CONTENT_TYPE_MAP
     
     async def _ensure_directory(self, directory: str) -> None:
         """
@@ -160,7 +165,8 @@ class AsyncImageDownloader:
             logger.debug(f"Diretório criado: {directory}")
     
     async def download(self, url: str, output_path: Optional[str] = None, 
-                      output_dir: Optional[str] = None, timeout: Optional[int] = None) -> Optional[str]:
+                      output_dir: Optional[str] = None, timeout: Optional[int] = None,
+                      verify_ssl: Optional[bool] = None) -> Optional[str]:
         """
         Baixa uma imagem a partir de uma URL de forma assíncrona.
         
@@ -169,6 +175,7 @@ class AsyncImageDownloader:
             output_path: Caminho completo onde a imagem será salva (opcional)
             output_dir: Diretório onde a imagem será salva (sobrepõe o diretório padrão)
             timeout: Tempo limite para a requisição em segundos (sobrepõe o timeout padrão)
+            verify_ssl: Se deve verificar certificados SSL (sobrepõe o padrão)
             
         Returns:
             Caminho para a imagem baixada ou None se falhar
@@ -180,22 +187,28 @@ class AsyncImageDownloader:
         # Usa o semáforo para limitar o número de downloads concorrentes
         async with self.semaphore:
             timeout_value = timeout if timeout is not None else self.timeout
+            verify_ssl_value = verify_ssl if verify_ssl is not None else self.verify_ssl
             
-            logger.info(f"Iniciando download da imagem: {url} (timeout: {timeout_value}s)")
+            logger.info(f"Iniciando download da imagem: {url} (timeout: {timeout_value}s, verify_ssl: {verify_ssl_value})")
             
             try:
                 # Configura timeout para aiohttp
                 timeout_obj = aiohttp.ClientTimeout(total=timeout_value)
                 
+                # Opções de SSL
+                ssl_context = None
+                if not verify_ssl_value:
+                    ssl_context = False  # Desabilita completamente a verificação SSL
+                
                 async with aiohttp.ClientSession(timeout=timeout_obj) as session:
-                    async with session.get(url) as response:
+                    async with session.get(url, ssl=ssl_context) as response:
                         # Verifica se a requisição foi bem-sucedida
                         response.raise_for_status()
                         
                         # Verifica o tipo de conteúdo
                         content_type = response.headers.get('Content-Type', '')
                         if not self._validate_image_content_type(content_type):
-                            logger.warning(f"O conteúdo da URL não parece ser uma imagem: {content_type}")
+                            logger.warning(f"O conteúdo da URL não parece ser uma imagem ou PDF: {content_type}")
                         
                         # Se output_path for fornecido, usa-o diretamente
                         if output_path:
@@ -211,7 +224,7 @@ class AsyncImageDownloader:
                             if not filename or '.' not in filename:
                                 # Cria um nome de arquivo com base no hash da URL e uma extensão apropriada
                                 ext = self._get_extension_from_content_type(content_type)
-                                filename = f"downloaded_image_{abs(hash(url))}{ext}"
+                                filename = f"downloaded_file_{abs(hash(url))}{ext}"
                             
                             # Define o diretório de saída
                             target_dir = output_dir or self.output_dir
@@ -229,7 +242,7 @@ class AsyncImageDownloader:
                         if dest_dir:
                             await self._ensure_directory(dest_dir)
                         
-                        # Salva a imagem
+                        # Salva o arquivo
                         with open(final_path, 'wb') as f:
                             async for chunk in response.content.iter_chunked(self.chunk_size):
                                 f.write(chunk)
@@ -241,24 +254,26 @@ class AsyncImageDownloader:
                 logger.error(f"Erro na requisição HTTP: {str(e)}")
                 return None
             except Exception as e:
-                logger.error(f"Erro ao baixar a imagem: {str(e)}")
+                logger.error(f"Erro ao baixar o arquivo: {str(e)}")
                 logger.debug(traceback.format_exc())
                 return None
     
     async def download_multiple(self, urls: List[str], output_dir: Optional[str] = None, 
                                timeout: Optional[int] = None, 
-                               progress_callback: Optional[callable] = None) -> List[str]:
+                               progress_callback: Optional[callable] = None,
+                               verify_ssl: Optional[bool] = None) -> List[str]:
         """
-        Baixa múltiplas imagens a partir de URLs de forma assíncrona.
+        Baixa múltiplos arquivos a partir de URLs de forma assíncrona.
         
         Args:
-            urls: Lista de URLs das imagens a serem baixadas
-            output_dir: Diretório onde as imagens serão salvas (sobrepõe o diretório padrão)
+            urls: Lista de URLs dos arquivos a serem baixados
+            output_dir: Diretório onde os arquivos serão salvos (sobrepõe o diretório padrão)
             timeout: Tempo limite para as requisições em segundos (sobrepõe o timeout padrão)
             progress_callback: Função de callback para reportar progresso (recebe n_concluídos, total)
+            verify_ssl: Se deve verificar certificados SSL (sobrepõe o padrão)
             
         Returns:
-            Lista dos caminhos para as imagens baixadas com sucesso
+            Lista dos caminhos para os arquivos baixados com sucesso
         """
         if not urls:
             return []
@@ -270,7 +285,12 @@ class AsyncImageDownloader:
         # Prepara as tarefas de download
         tasks = []
         for url in urls:
-            task = asyncio.create_task(self.download(url, output_dir=output_dir, timeout=timeout))
+            task = asyncio.create_task(self.download(
+                url, 
+                output_dir=output_dir, 
+                timeout=timeout,
+                verify_ssl=verify_ssl
+            ))
             tasks.append(task)
         
         # Monitora o progresso
@@ -284,28 +304,36 @@ class AsyncImageDownloader:
             if progress_callback:
                 progress_callback(i + 1, len(urls))
         
-        logger.info(f"Download múltiplo concluído: {len(downloaded_paths)}/{len(urls)} imagens baixadas")
+        logger.info(f"Download múltiplo concluído: {len(downloaded_paths)}/{len(urls)} arquivos baixados")
         return downloaded_paths
     
-    async def check_url(self, url: str, timeout: Optional[int] = None) -> Tuple[bool, str]:
+    async def check_url(self, url: str, timeout: Optional[int] = None,
+                       verify_ssl: Optional[bool] = None) -> Tuple[bool, str]:
         """
-        Verifica se uma URL contém uma imagem válida de forma assíncrona.
+        Verifica se uma URL contém um arquivo válido de forma assíncrona.
         
         Args:
             url: URL a ser verificada
             timeout: Tempo limite para a requisição em segundos (sobrepõe o timeout padrão)
+            verify_ssl: Se deve verificar certificados SSL (sobrepõe o padrão)
             
         Returns:
             Tupla (é_válido, tipo_de_conteúdo)
         """
         timeout_value = timeout if timeout is not None else self.timeout
+        verify_ssl_value = verify_ssl if verify_ssl is not None else self.verify_ssl
         
         try:
             # Configura timeout para aiohttp
             timeout_obj = aiohttp.ClientTimeout(total=timeout_value)
             
+            # Opções de SSL
+            ssl_context = None
+            if not verify_ssl_value:
+                ssl_context = False  # Desabilita completamente a verificação SSL
+            
             async with aiohttp.ClientSession(timeout=timeout_obj) as session:
-                async with session.head(url) as response:
+                async with session.head(url, ssl=ssl_context) as response:
                     response.raise_for_status()
                     
                     content_type = response.headers.get('Content-Type', '')
@@ -318,24 +346,26 @@ class AsyncImageDownloader:
             return False, str(e)
 
     async def batch_download(self, urls: List[str], output_dir: Optional[str] = None,
-                           timeout: Optional[int] = None, batch_size: int = 100) -> List[str]:
+                           timeout: Optional[int] = None, batch_size: int = 100,
+                           verify_ssl: Optional[bool] = None) -> List[str]:
         """
-        Baixa grandes volumes de imagens usando processamento em lotes.
+        Baixa grandes volumes de arquivos usando processamento em lotes.
         
         Args:
-            urls: Lista de URLs das imagens a serem baixadas
-            output_dir: Diretório onde as imagens serão salvas
+            urls: Lista de URLs dos arquivos a serem baixados
+            output_dir: Diretório onde os arquivos serão salvos
             timeout: Tempo limite para as requisições
-            batch_size: Número de imagens por lote
+            batch_size: Número de arquivos por lote
+            verify_ssl: Se deve verificar certificados SSL (sobrepõe o padrão)
             
         Returns:
-            Lista de caminhos para as imagens baixadas com sucesso
+            Lista de caminhos para os arquivos baixados com sucesso
         """
         if not urls:
             return []
         
         total_urls = len(urls)
-        logger.info(f"Iniciando download em lotes de {total_urls} imagens (tamanho do lote: {batch_size})")
+        logger.info(f"Iniciando download em lotes de {total_urls} arquivos (tamanho do lote: {batch_size})")
         
         start_time = time.time()
         all_downloaded = []
@@ -359,8 +389,11 @@ class AsyncImageDownloader:
             
             # Processa o lote
             batch_results = await self.download_multiple(
-                batch_urls, output_dir=output_dir, timeout=timeout, 
-                progress_callback=batch_callback
+                batch_urls, 
+                output_dir=output_dir, 
+                timeout=timeout, 
+                progress_callback=batch_callback,
+                verify_ssl=verify_ssl
             )
             
             all_downloaded.extend(batch_results)
@@ -376,7 +409,7 @@ class AsyncImageDownloader:
         
         logger.info(f"Download em lotes concluído. Tempo total: {elapsed_time:.1f}s")
         logger.info(f"Taxa de sucesso: {success_rate:.1f}% ({len(all_downloaded)}/{total_urls})")
-        logger.info(f"Tempo médio por imagem: {avg_time_per_image:.3f}s")
+        logger.info(f"Tempo médio por arquivo: {avg_time_per_image:.3f}s")
         
         return all_downloaded
 
@@ -397,6 +430,8 @@ async def _async_main():
     parser.add_argument('--output-dir', '-o', type=str, help='Diretório para salvar as imagens')
     parser.add_argument('--concurrent', '-c', type=int, default=20, 
                         help='Número máximo de downloads concorrentes')
+    parser.add_argument('--no-verify-ssl', action='store_true',
+                        help='Desabilitar verificação de certificados SSL')
     
     # Subcomandos
     subparsers = parser.add_subparsers(dest='command', help='Comando a ser executado')
@@ -429,12 +464,13 @@ async def _async_main():
     downloader = AsyncImageDownloader(
         output_dir=args.output_dir, 
         timeout=args.timeout,
-        max_concurrent_downloads=args.concurrent
+        max_concurrent_downloads=args.concurrent,
+        verify_ssl=not args.no_verify_ssl
     )
     
     # Executa o comando especificado
     if args.command == 'single':
-        result = await downloader.download(args.url, output_path=args.output)
+        result = await downloader.download(args.url, output_path=args.output, verify_ssl=not args.no_verify_ssl)
         if result:
             print(f"Imagem baixada com sucesso: {result}")
             return 0
@@ -443,7 +479,7 @@ async def _async_main():
             return 1
     
     elif args.command == 'multi':
-        results = await downloader.download_multiple(args.urls)
+        results = await downloader.download_multiple(args.urls, verify_ssl=not args.no_verify_ssl)
         if results:
             print(f"Imagens baixadas com sucesso ({len(results)}/{len(args.urls)}):")
             for path in results:
@@ -471,7 +507,8 @@ async def _async_main():
             urls, 
             output_dir=args.output_dir, 
             timeout=args.timeout,
-            batch_size=args.batch_size
+            batch_size=args.batch_size,
+            verify_ssl=not args.no_verify_ssl
         )
         
         success_rate = len(results) / len(urls) * 100
@@ -479,7 +516,7 @@ async def _async_main():
         return 0
     
     elif args.command == 'check':
-        is_valid, content_type = await downloader.check_url(args.url)
+        is_valid, content_type = await downloader.check_url(args.url, verify_ssl=not args.no_verify_ssl)
         if is_valid:
             print(f"URL válida. Tipo de conteúdo: {content_type}")
             return 0

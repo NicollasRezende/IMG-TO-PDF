@@ -1,289 +1,323 @@
-# main.py
+#!/usr/bin/env python3
+# quick_download.py - Script modificado para baixar arquivos multipáginas
+
+import aiohttp
 import asyncio
-import logging
+import sys
 import os
-import argparse
+import ssl
+import urllib3
+import csv
+import re
+import shutil  # Para deletar a pasta de downloads
+from urllib.parse import urljoin, urlparse, parse_qs, urlunparse
+import traceback
 import time
-from typing import List, Optional
+import datetime
 
-# Importar os módulos utils
+# Importar o conversor AsyncImageToPdfConverter
 from utils.image_to_pdf import AsyncImageToPdfConverter, setup_logging as setup_pdf_logging
-from utils.image_downloader import AsyncImageDownloader, setup_logging as setup_downloader_logging
 
-async def process_urls_file(file_path: str, downloader: AsyncImageDownloader, 
-                           converter: AsyncImageToPdfConverter, 
-                           output_dir: str, combine: bool = False,
-                           batch_size: int = 100) -> bool:
-    """
-    Processa um arquivo com lista de URLs para download e conversão.
+# Desativar verificação SSL globalmente
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+ssl._create_default_https_context = ssl._create_unverified_context
+
+def update_preview_index(url, index):
+    """Atualiza o parâmetro previewFileIndex na URL"""
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query)
     
-    Args:
-        file_path: Caminho para o arquivo com as URLs (uma por linha)
-        downloader: Instância do downloader de imagens
-        converter: Instância do conversor de PDF
-        output_dir: Diretório de saída para os PDFs
-        combine: Se deve combinar todas as imagens em um único PDF
-        batch_size: Tamanho do lote para processamento
-        
-    Returns:
-        True se a operação for bem-sucedida, False caso contrário
-    """
-    logger = logging.getLogger("main")
+    # Atualizar o parâmetro previewFileIndex
+    query['previewFileIndex'] = [str(index)]
+    
+    # Reconstruir a URL
+    updated_parsed = parsed._replace(query='&'.join(f"{k}={v[0]}" for k, v in query.items()))
+    return urlunparse(updated_parsed)
+
+async def download_file(url, output_dir, original_filename=None, page_num=1):
+    """Download de um arquivo com SSL desativado, salvando como PNG"""
+    if original_filename:
+        # Usar o nome base do arquivo original, sem a extensão
+        filename = original_filename.strip('"')
+        # Remover a extensão existente e adicionar .png
+        base_name = os.path.splitext(filename)[0]
+        if page_num > 1:
+            filename = f"{base_name}_page{page_num}.png"
+        else:
+            filename = f"{base_name}.png"
+    else:
+        # Fallback: extrair o nome do arquivo da URL e colocar extensão .png
+        filename = url.split('/')[-1].split('?')[0]
+        filename = os.path.splitext(filename)[0]
+        if not filename:
+            filename = f"file_{hash(url)}"
+        if page_num > 1:
+            filename = f"{filename}_page{page_num}.png"
+        else:
+            filename += '.png'
+    
+    output_path = os.path.join(output_dir, filename)
     
     try:
-        # Lê as URLs do arquivo
-        with open(file_path, 'r') as f:
-            urls = [line.strip() for line in f if line.strip()]
+        # Criar diretório se não existir
+        os.makedirs(output_dir, exist_ok=True)
         
-        if not urls:
-            logger.error(f"Nenhuma URL encontrada no arquivo {file_path}")
-            return False
-        
-        logger.info(f"Lidas {len(urls)} URLs do arquivo {file_path}")
-        
-        # Define os diretórios de trabalho
-        imgs_dir = os.path.join(output_dir, "imgs")
-        pdfs_dir = os.path.join(output_dir, "pdfs")
-        
-        # Garante que os diretórios existam
-        os.makedirs(imgs_dir, exist_ok=True)
-        os.makedirs(pdfs_dir, exist_ok=True)
-        
-        # Baixa as imagens em lotes
-        start_time = time.time()
-        logger.info(f"Iniciando download de {len(urls)} imagens...")
-        
-        downloaded_images = await downloader.batch_download(urls, output_dir=imgs_dir, batch_size=batch_size)
-        
-        if not downloaded_images:
-            logger.error("Nenhuma imagem baixada com sucesso")
-            return False
-        
-        download_time = time.time() - start_time
-        logger.info(f"Download concluído em {download_time:.1f}s. "
-                   f"Taxa de sucesso: {len(downloaded_images)/len(urls)*100:.1f}% "
-                   f"({len(downloaded_images)}/{len(urls)})")
-        
-        # Converte as imagens baixadas para PDF
-        logger.info(f"Iniciando conversão de {len(downloaded_images)} imagens para PDF...")
-        
-        if combine:
-            # Combina todas as imagens em um único PDF
-            pdf_path = os.path.join(pdfs_dir, f"combined_{int(time.time())}.pdf")
-            success = await converter.convert_multiple_images(downloaded_images, pdf_path)
-            
-            if success:
-                logger.info(f"Conversão concluída com sucesso. PDF salvo em: {pdf_path}")
-            else:
-                logger.error("Falha ao combinar as imagens em um único PDF")
-                return False
-        else:
-            # Converte cada imagem individualmente
-            success = await converter.batch_convert(
-                downloaded_images, imgs_dir, pdfs_dir, batch_size=batch_size
-            )
-            
-            if success:
-                logger.info("Conversão individual das imagens concluída com sucesso")
-            else:
-                logger.error("Falha ao converter as imagens individualmente")
-                return False
-        
-        total_time = time.time() - start_time
-        logger.info(f"Processamento completo em {total_time:.1f}s")
-        return True
-    
+        # Configurar session sem verificação SSL
+        async with aiohttp.ClientSession() as session:
+            print(f"Baixando: {url} -> {filename}")
+            async with session.get(url, ssl=False) as response:
+                if response.status == 200:
+                    with open(output_path, 'wb') as f:
+                        while True:
+                            chunk = await response.content.read(8192)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                    print(f"Download concluído: {output_path}")
+                    return output_path, None
+                else:
+                    error_msg = f"Erro ao baixar {url}: {response.status}"
+                    print(error_msg)
+                    return None, (original_filename, url, error_msg, response.status, page_num)
     except Exception as e:
-        logger.error(f"Erro ao processar o arquivo de URLs: {str(e)}", exc_info=True)
-        return False
+        error_msg = f"Erro: {str(e)}"
+        print(error_msg)
+        return None, (original_filename, url, error_msg, str(e), page_num)
 
-async def main_async():
-    """Função principal assíncrona."""
-    # Configuração dos argumentos de linha de comando
-    parser = argparse.ArgumentParser(description='Download e conversão de imagens para PDF')
+async def download_multipages(url, output_dir, original_filename, max_pages=50):
+    """Tenta baixar múltiplas páginas de um documento"""
+    pages = []
+    errors = []
     
-    # Argumentos gerais
-    parser.add_argument('--log-level', type=str, choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
-                        default='INFO', help='Nível de logging')
-    parser.add_argument('--log-file', type=str, default="logs/image_processor.log", 
-                        help='Arquivo para salvar os logs')
-    parser.add_argument('--output-dir', '-o', type=str, default="output",
-                        help='Diretório base para saída')
+    # Verificar se há um parâmetro previewFileIndex na URL
+    if 'previewFileIndex=' not in url:
+        # Se não tiver, tenta fazer download como documento de página única
+        result, error = await download_file(url, output_dir, original_filename)
+        if result:
+            pages.append(result)
+        if error:
+            errors.append(error)
+        return pages, errors
     
-    # Configurações do downloader
-    parser.add_argument('--dl-timeout', type=int, default=30,
-                        help='Tempo limite para requisições em segundos')
-    parser.add_argument('--dl-concurrent', type=int, default=20,
-                        help='Número máximo de downloads concorrentes')
+    # Tenta baixar páginas sequenciais
+    for page_num in range(1, max_pages + 1):
+        # Atualizar o índice da página na URL
+        page_url = re.sub(r'previewFileIndex=\d+', f'previewFileIndex={page_num}', url)
+        
+        # Tenta baixar a página
+        result, error = await download_file(page_url, output_dir, original_filename, page_num)
+        
+        if result:
+            pages.append(result)
+        if error:
+            errors.append(error)
+            # Se recebermos um erro (especialmente 404), assumimos que chegamos ao fim do documento
+            break
     
-    # Configurações do conversor
-    parser.add_argument('--dpi', type=int, default=300,
-                        help='Resolução DPI para a conversão')
-    parser.add_argument('--workers', type=int, default=8,
-                        help='Número máximo de workers para processamento')
+    print(f"Baixadas {len(pages)} páginas para {original_filename}")
+    return pages, errors
+
+def write_error_log(errors, log_file="error_log.txt"):
+    """Escreve os erros em um arquivo de log"""
+    if not errors:
+        return
     
-    # Subcomandos
-    subparsers = parser.add_subparsers(dest='command', help='Comando a ser executado')
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(log_file, 'w') as f:
+        f.write(f"=== LOG DE ERROS GERADO EM {timestamp} ===\n\n")
+        f.write(f"Total de erros: {len(errors)}\n\n")
+        
+        for i, (filename, url, error_msg, status, page_num) in enumerate(errors, 1):
+            f.write(f"ERRO #{i}:\n")
+            f.write(f"Arquivo: {filename}\n")
+            f.write(f"URL: {url}\n")
+            f.write(f"Página: {page_num}\n")
+            f.write(f"Mensagem: {error_msg}\n")
+            f.write(f"Status/Detalhe: {status}\n")
+            f.write("-" * 60 + "\n\n")
     
-    # Subcomando para processar uma única URL
-    single_parser = subparsers.add_parser('single', help='Baixar e converter uma única imagem')
-    single_parser.add_argument('url', type=str, help='URL da imagem')
-    single_parser.add_argument('--output', type=str, help='Nome do arquivo PDF de saída')
+    print(f"Log de erros gerado em {log_file}")
+
+def cleanup_downloads(download_dir, keep_downloads=False):
+    """Remove a pasta de downloads se a conversão for concluída com sucesso"""
+    if not keep_downloads and os.path.exists(download_dir):
+        try:
+            shutil.rmtree(download_dir)
+            print(f"Pasta de downloads removida: {download_dir}")
+        except Exception as e:
+            print(f"Erro ao remover pasta de downloads: {str(e)}")
+
+async def process_csv(csv_path, output_dir, pdf_dir, error_log_file="error_log.txt", convert_to_pdf=True, 
+                    base_url="https://www.saude.df.gov.br", test_mode=False, test_limit=5, max_pages=20,
+                    keep_downloads=False):
+    """Processa um CSV com URLs de preview, salvando como PNG e opcionalmente convertendo para PDF"""
+    # Ler o CSV
+    file_data = []
+    try:
+        with open(csv_path, 'r', encoding='utf-8') as csv_file:
+            reader = csv.DictReader(csv_file)
+            for row in reader:
+                if 'PREVIEW_URL' in row and row['PREVIEW_URL'] and 'FILENAME' in row:
+                    preview_url = row['PREVIEW_URL']
+                    filename = row['FILENAME']
+                    full_url = urljoin(base_url, preview_url)
+                    file_data.append((full_url, filename))
+    except Exception as e:
+        print(f"Erro ao ler o CSV: {str(e)}")
+        return False
     
-    # Subcomando para processar várias URLs fornecidas na linha de comando
-    multi_parser = subparsers.add_parser('multi', help='Baixar e converter múltiplas imagens')
-    multi_parser.add_argument('urls', type=str, nargs='+', help='URLs das imagens')
-    multi_parser.add_argument('--combine', '-c', action='store_true',
-                             help='Combinar em um único PDF')
+    if not file_data:
+        print("Nenhuma URL encontrada no CSV")
+        return False
     
-    # Subcomando para processar URLs de um arquivo
-    file_parser = subparsers.add_parser('file', help='Processar URLs de um arquivo de texto')
-    file_parser.add_argument('file_path', type=str, help='Caminho para o arquivo com as URLs')
-    file_parser.add_argument('--combine', '-c', action='store_true',
-                            help='Combinar em um único PDF')
-    file_parser.add_argument('--batch-size', '-b', type=int, default=100,
-                            help='Tamanho do lote para processamento')
+    # Aplicar modo de teste se necessário
+    if test_mode and test_limit > 0:
+        original_count = len(file_data)
+        file_data = file_data[:test_limit]
+        print(f"MODO DE TESTE: Limitando a {test_limit} arquivos de {original_count} disponíveis")
+    
+    print(f"Processando {len(file_data)} registros do CSV")
+    
+    # Baixar as URLs (usando um número limitado de tarefas concorrentes)
+    semaphore = asyncio.Semaphore(10)  # Limitar a 10 downloads simultâneos
+    all_pages = {}  # Dicionário para armazenar páginas por documento
+    all_errors = []
+    
+    async def process_document(url, filename):
+        async with semaphore:
+            # Tenta baixar todas as páginas do documento
+            pages, errors = await download_multipages(url, output_dir, filename, max_pages)
+            return filename, pages, errors
+    
+    # Criar tarefas para processar todos os documentos
+    tasks = []
+    for url, filename in file_data:
+        task = asyncio.create_task(process_document(url, filename))
+        tasks.append(task)
+    
+    # Aguardar todas as tarefas e coletar resultados
+    results = await asyncio.gather(*tasks)
+    
+    # Processar resultados
+    for filename, pages, errors in results:
+        if pages:
+            # Remover aspas do nome do arquivo, se houver
+            clean_filename = filename.strip('"')
+            base_name = os.path.splitext(clean_filename)[0]
+            all_pages[base_name] = pages
+        
+        if errors:
+            all_errors.extend(errors)
+    
+    # Gerar log de erros se houver
+    if all_errors:
+        write_error_log(all_errors, error_log_file)
+    
+    # Estatísticas de download
+    success_docs = len(all_pages)
+    total_pages = sum(len(pages) for pages in all_pages.values())
+    print(f"Downloads concluídos: {success_docs}/{len(file_data)} documentos, {total_pages} páginas no total (Erros: {len(all_errors)})")
+    
+    # Variável para controlar o sucesso da conversão
+    conversion_success = False
+    
+    # Converter para PDF
+    if convert_to_pdf and all_pages:
+        print(f"Iniciando conversão de {total_pages} páginas para PDF...")
+        
+        # Criar conversor
+        converter = AsyncImageToPdfConverter(dpi=300)
+        
+        try:
+            # Garantir que o diretório de PDF exista
+            os.makedirs(pdf_dir, exist_ok=True)
+            
+            # Converter cada documento para um PDF
+            conversion_results = []
+            for base_name, pages in all_pages.items():
+                if len(pages) == 0:
+                    continue
+                
+                pdf_path = os.path.join(pdf_dir, f"{base_name}.pdf")
+                
+                if len(pages) == 1:
+                    # Documento de página única
+                    success = await converter.convert_single_image(pages[0], pdf_path)
+                    conversion_results.append(success)
+                    if success:
+                        print(f"Documento convertido: {pdf_path}")
+                    else:
+                        print(f"Falha ao converter: {base_name}")
+                else:
+                    # Documento multipáginas
+                    success = await converter.convert_multiple_images(pages, pdf_path)
+                    conversion_results.append(success)
+                    if success:
+                        print(f"Documento multipáginas convertido ({len(pages)} páginas): {pdf_path}")
+                    else:
+                        print(f"Falha ao converter documento multipáginas: {base_name}")
+            
+            # Verificar se todas as conversões foram bem-sucedidas
+            conversion_success = all(conversion_results) and len(conversion_results) > 0
+            
+            print("Conversão para PDF concluída")
+                    
+        except Exception as e:
+            error_msg = f"Erro durante a conversão para PDF: {str(e)}"
+            print(error_msg)
+            print(traceback.format_exc())
+            
+            # Adicionar erro de conversão ao log
+            with open(error_log_file, 'a') as f:
+                f.write("\nERRO NA CONVERSÃO PARA PDF:\n")
+                f.write(f"{error_msg}\n")
+                f.write(traceback.format_exc())
+        finally:
+            # Liberar recursos
+            converter.close()
+    
+    # Limpar pasta de downloads se a conversão foi bem-sucedida
+    if conversion_success and not keep_downloads:
+        cleanup_downloads(output_dir, keep_downloads)
+    
+    return success_docs > 0
+
+async def main():
+    """Função principal"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Download e conversão de arquivos para PNG e PDF')
+    parser.add_argument('csv_file', help='Arquivo CSV com URLs de preview')
+    parser.add_argument('--output-dir', '-o', default='downloads', help='Diretório para salvar os arquivos baixados')
+    parser.add_argument('--pdf-dir', '-p', default='pdfs', help='Diretório para salvar os PDFs')
+    parser.add_argument('--error-log', '-e', default='error_log.txt', help='Arquivo para registrar erros')
+    parser.add_argument('--no-pdf', action='store_true', help='Não converter para PDF')
+    parser.add_argument('--base-url', '-b', default='https://www.saude.df.gov.br', help='URL base')
+    parser.add_argument('--test', '-t', action='store_true', help='Ativar modo de teste (baixa apenas alguns arquivos)')
+    parser.add_argument('--limit', '-l', type=int, default=5, help='Número de arquivos a baixar no modo de teste')
+    parser.add_argument('--max-pages', '-m', type=int, default=20, help='Número máximo de páginas a tentar por documento')
+    parser.add_argument('--keep-downloads', '-k', action='store_true', help='Manter os arquivos PNG após a conversão')
     
     args = parser.parse_args()
     
     # Configurar logging
-    log_dir = os.path.dirname(args.log_file)
-    if log_dir and not os.path.exists(log_dir):
-        os.makedirs(log_dir)
-        
-    log_level = getattr(logging, args.log_level)
-    setup_pdf_logging(log_level=log_level, log_file=args.log_file)
-    setup_downloader_logging(log_level=log_level, log_file=args.log_file)
+    setup_pdf_logging()
     
-    # Configurar logger principal
-    logger = logging.getLogger("main")
-    logger.setLevel(log_level)
-    if not logger.handlers:
-        if args.log_file:
-            handler = logging.FileHandler(args.log_file)
-        else:
-            handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
-        logger.addHandler(handler)
-    
-    # Garantir que o diretório de saída exista
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
-    
-    # Criar instâncias
-    downloader = AsyncImageDownloader(
-        timeout=args.dl_timeout,
-        max_concurrent_downloads=args.dl_concurrent
+    # Processar o CSV
+    success = await process_csv(
+        args.csv_file, 
+        args.output_dir, 
+        args.pdf_dir,
+        args.error_log,
+        not args.no_pdf, 
+        args.base_url,
+        args.test,
+        args.limit,
+        args.max_pages,
+        args.keep_downloads
     )
     
-    converter = AsyncImageToPdfConverter(
-        dpi=args.dpi,
-        max_workers=args.workers
-    )
-    
-    try:
-        # Executar o comando selecionado
-        if args.command == 'single':
-            # Definir caminhos
-            imgs_dir = os.path.join(args.output_dir, "imgs")
-            pdfs_dir = os.path.join(args.output_dir, "pdfs")
-            os.makedirs(imgs_dir, exist_ok=True)
-            os.makedirs(pdfs_dir, exist_ok=True)
-            
-            # Download da imagem
-            logger.info(f"Iniciando download de {args.url}")
-            image_path = await downloader.download(args.url, output_dir=imgs_dir)
-            
-            if not image_path:
-                logger.error(f"Falha ao baixar a imagem de {args.url}")
-                return 1
-            
-            # Conversão para PDF
-            if args.output:
-                pdf_path = os.path.join(pdfs_dir, args.output)
-            else:
-                pdf_name = os.path.basename(os.path.splitext(image_path)[0]) + ".pdf"
-                pdf_path = os.path.join(pdfs_dir, pdf_name)
-            
-            logger.info(f"Convertendo imagem para PDF: {pdf_path}")
-            success = await converter.convert_single_image(image_path, pdf_path)
-            
-            if success:
-                logger.info(f"Processamento concluído com sucesso: {pdf_path}")
-                return 0
-            else:
-                logger.error("Falha ao converter a imagem para PDF")
-                return 1
-            
-        elif args.command == 'multi':
-            # Definir caminhos
-            imgs_dir = os.path.join(args.output_dir, "imgs")
-            pdfs_dir = os.path.join(args.output_dir, "pdfs")
-            os.makedirs(imgs_dir, exist_ok=True)
-            os.makedirs(pdfs_dir, exist_ok=True)
-            
-            # Download das imagens
-            logger.info(f"Iniciando download de {len(args.urls)} imagens")
-            image_paths = await downloader.download_multiple(args.urls, output_dir=imgs_dir)
-            
-            if not image_paths:
-                logger.error("Falha ao baixar as imagens")
-                return 1
-            
-            logger.info(f"Baixadas {len(image_paths)} imagens com sucesso")
-            
-            # Conversão para PDF
-            if args.combine:
-                pdf_path = os.path.join(pdfs_dir, f"combined_{int(time.time())}.pdf")
-                logger.info(f"Combinando imagens em um único PDF: {pdf_path}")
-                success = await converter.convert_multiple_images(image_paths, pdf_path)
-                
-                if success:
-                    logger.info(f"Combinação concluída com sucesso: {pdf_path}")
-                else:
-                    logger.error("Falha ao combinar as imagens em um único PDF")
-                    return 1
-            else:
-                logger.info("Convertendo imagens individualmente")
-                success = await converter.batch_convert(image_paths, imgs_dir, pdfs_dir)
-                
-                if success:
-                    logger.info("Conversão individual concluída com sucesso")
-                else:
-                    logger.error("Falha ao converter as imagens individualmente")
-                    return 1
-            
-            return 0
-            
-        elif args.command == 'file':
-            success = await process_urls_file(
-                args.file_path,
-                downloader,
-                converter,
-                args.output_dir,
-                args.combine,
-                args.batch_size
-            )
-            
-            return 0 if success else 1
-            
-        else:
-            parser.print_help()
-            return 0
-            
-    except Exception as e:
-        logger.error(f"Erro não tratado: {str(e)}", exc_info=True)
-        return 1
-        
-    finally:
-        # Liberar recursos
-        converter.close()
-        
-def main():
-    """Função principal para uso como script."""
-    return asyncio.run(main_async())
+    return 0 if success else 1
 
 if __name__ == "__main__":
-    import sys
-    sys.exit(main())
+    asyncio.run(main())
