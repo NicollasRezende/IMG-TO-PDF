@@ -4,40 +4,42 @@ Uma aplicação robusta e assíncrona para baixar imagens da web e convertê-las
 
 ## Características Principais
 
-- **Download assíncrono** de múltiplas imagens simultaneamente
-- **Conversão otimizada** de imagens para PDF
-- **Processamento em lotes** para lidar com grandes volumes (até 15k+ arquivos)
-- **Interface de linha de comando** completa
-- **Logging detalhado** com estatísticas de processamento
-- **Tratamento robusto de erros**
+-   **Download assíncrono** de múltiplas imagens simultaneamente
+-   **Conversão otimizada** de imagens para PDF
+-   **Processamento em lotes** para lidar com grandes volumes (até 15k+ arquivos)
+-   **Interface de linha de comando** completa
+-   **Logging detalhado** com estatísticas de processamento
+-   **Tratamento robusto de erros**
 
 ## Requisitos
 
-- Python 3.7+
-- Dependências:
-  - Pillow (PIL Fork)
-  - aiohttp
-  - requests
-  - asyncio
+-   Python 3.7+
+-   Dependências:
+    -   Pillow (PIL Fork)
+    -   aiohttp
+    -   requests
+    -   asyncio
 
 ## Instalação
 
 1. Clone o repositório:
-   ```bash
-   git clone https://github.com/seu-usuario/image-downloader-pdf-converter.git
-   cd image-downloader-pdf-converter
-   ```
+
+    ```bash
+    git clone https://github.com/seu-usuario/image-downloader-pdf-converter.git
+    cd image-downloader-pdf-converter
+    ```
 
 2. Crie um ambiente virtual (opcional, mas recomendado):
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # No Windows: venv\Scripts\activate
-   ```
+
+    ```bash
+    python -m venv venv
+    source venv/bin/activate  # No Windows: venv\Scripts\activate
+    ```
 
 3. Instale as dependências:
-   ```bash
-   pip install -r requirements.txt
-   ```
+    ```bash
+    pip install -r requirements.txt
+    ```
 
 ## Estrutura do Projeto
 
@@ -49,6 +51,9 @@ image-downloader-pdf-converter/
 │   ├── __init__.py
 │   ├── image_downloader.py       # Módulo para download de imagens
 │   └── image_to_pdf.py           # Módulo para conversão de imagens para PDF
+├── update-files/                 # Scripts para atualização de arquivos
+│   ├── generate.py               # Script para gerar novos arquivos
+│   └── update.py                 # Script para atualizar arquivos existentes
 ├── logs/                         # Logs do sistema (criado automaticamente)
 ├── output/                       # Arquivos de saída (criado automaticamente)
 │   ├── imgs/                     # Imagens baixadas
@@ -98,45 +103,48 @@ python main.py file urls.txt \
 
 ### Parâmetros Globais
 
-- `--log-level`: Nível de logging (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-- `--log-file`: Arquivo de log (padrão: logs/image_processor.log)
-- `--output-dir`, `-o`: Diretório base para saída (padrão: output)
+-   `--log-level`: Nível de logging (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+-   `--log-file`: Arquivo de log (padrão: logs/image_processor.log)
+-   `--output-dir`, `-o`: Diretório base para saída (padrão: output)
 
 ### Parâmetros do Downloader
 
-- `--dl-timeout`: Tempo limite para requisições em segundos (padrão: 30)
-- `--dl-concurrent`: Número máximo de downloads concorrentes (padrão: 20)
+-   `--dl-timeout`: Tempo limite para requisições em segundos (padrão: 30)
+-   `--dl-concurrent`: Número máximo de downloads concorrentes (padrão: 20)
 
 ### Parâmetros do Conversor
 
-- `--dpi`: Resolução DPI para a conversão (padrão: 300)
-- `--workers`: Número máximo de workers para processamento (padrão: 8)
+-   `--dpi`: Resolução DPI para a conversão (padrão: 300)
+-   `--workers`: Número máximo de workers para processamento (padrão: 8)
 
 ### Parâmetros Específicos do Comando `file`
 
-- `--batch-size`, `-b`: Tamanho do lote para processamento (padrão: 100)
-- `--combine`, `-c`: Combinar todas as imagens em um único PDF
+-   `--batch-size`, `-b`: Tamanho do lote para processamento (padrão: 100)
+-   `--combine`, `-c`: Combinar todas as imagens em um único PDF
 
 ## Otimização de Desempenho
 
 Para obter o melhor desempenho durante o processamento de grandes volumes de imagens:
 
 1. **Ajuste o número de downloads concorrentes**:
-   - Aumente para conexões de internet rápidas e estáveis (ex: 30-50)
-   - Diminua para conexões mais lentas (ex: 10-15)
+
+    - Aumente para conexões de internet rápidas e estáveis (ex: 30-50)
+    - Diminua para conexões mais lentas (ex: 10-15)
 
 2. **Ajuste o número de workers**:
-   - Idealmente, defina um valor próximo ao número de núcleos de CPU
-   - Para sistemas com 4 núcleos: 4-8 workers
-   - Para sistemas com 8+ núcleos: 8-16 workers
+
+    - Idealmente, defina um valor próximo ao número de núcleos de CPU
+    - Para sistemas com 4 núcleos: 4-8 workers
+    - Para sistemas com 8+ núcleos: 8-16 workers
 
 3. **Ajuste o tamanho do lote**:
-   - Lotes menores (50-100) para sistemas com menos memória
-   - Lotes maiores (200-500) para sistemas com mais memória e melhor monitoramento de progresso
+
+    - Lotes menores (50-100) para sistemas com menos memória
+    - Lotes maiores (200-500) para sistemas com mais memória e melhor monitoramento de progresso
 
 4. **Ajuste a resolução DPI**:
-   - Valores mais altos (300-600) para melhor qualidade
-   - Valores mais baixos (150-200) para arquivos menores e processamento mais rápido
+    - Valores mais altos (300-600) para melhor qualidade
+    - Valores mais baixos (150-200) para arquivos menores e processamento mais rápido
 
 ## Exemplos de Arquivo de URLs
 
@@ -153,31 +161,33 @@ https://exemplo.com/imagem3.webp
 
 A aplicação é projetada para ser robusta e lidar com falhas comuns:
 
-- URLs inválidas
-- Timeouts de conexão
-- Formatos de arquivo não suportados
-- Falhas durante a conversão
+-   URLs inválidas
+-   Timeouts de conexão
+-   Formatos de arquivo não suportados
+-   Falhas durante a conversão
 
 Mesmo se algumas imagens falharem, o processamento continuará para o restante.
 
 ## Como Funciona
 
 1. **Download de Imagens**:
-   - Utiliza `aiohttp` para realizar downloads assíncronos
-   - Implementa semáforos para limitar a concorrência
-   - Detecta automaticamente o tipo de conteúdo e extensão do arquivo
+
+    - Utiliza `aiohttp` para realizar downloads assíncronos
+    - Implementa semáforos para limitar a concorrência
+    - Detecta automaticamente o tipo de conteúdo e extensão do arquivo
 
 2. **Conversão para PDF**:
-   - Utiliza a biblioteca Pillow (PIL) para manipulação de imagens
-   - Converte para RGB se necessário
-   - Processa as imagens em lotes paralelos usando ThreadPoolExecutor
+
+    - Utiliza a biblioteca Pillow (PIL) para manipulação de imagens
+    - Converte para RGB se necessário
+    - Processa as imagens em lotes paralelos usando ThreadPoolExecutor
 
 3. **Monitoramento e Estatísticas**:
-   - Tracking de tempo total e tempo médio por arquivo
-   - Estatísticas de taxa de sucesso
-   - Feedback de progresso em tempo real
+    - Tracking de tempo total e tempo médio por arquivo
+    - Estatísticas de taxa de sucesso
+    - Feedback de progresso em tempo real
 
 ## Limitações
 
-- Apenas formatos de imagem suportados pela biblioteca Pillow podem ser convertidos (PNG, JPEG, TIFF, BMP, WebP)
-- A resolução máxima das imagens é limitada pela memória disponível
+-   Apenas formatos de imagem suportados pela biblioteca Pillow podem ser convertidos (PNG, JPEG, TIFF, BMP, WebP)
+-   A resolução máxima das imagens é limitada pela memória disponível
